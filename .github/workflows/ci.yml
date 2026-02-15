@@ -1,0 +1,37 @@
+name: CI Quality Gate
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  build-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: './src/package-lock.json'
+
+      - name: Install Dependencies
+        working-directory: ./src
+        run: npm ci
+
+      - name: Run Linter
+        working-directory: ./src
+        run: npm run lint
+
+      - name: Type Check (TypeScript)
+        working-directory: ./src
+        run: npx tsc --noEmit
+
+      - name: Check Build
+        working-directory: ./src
+        run: npm run build
