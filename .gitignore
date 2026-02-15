@@ -1,0 +1,34 @@
+# dependencies
+node_modules/
+
+# next.js build output
+.next/
+out/
+
+# env files (secrets)
+.env
+.env*.local
+.env.production
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# debug logs
+npm-debug.log*
+yarn-debug.log*
+
+# vercel
+.vercel
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# test artifacts
+coverage/
+test-output.txt
+
+# typescript
+*.tsbuildinfo
