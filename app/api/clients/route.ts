@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     await addClient({
       clientName,
       lastServiceDate,
-      frequency: parseInt(frequency),
+      frequency: parseInt(frequency, 10),
       task,
       phone,
     });

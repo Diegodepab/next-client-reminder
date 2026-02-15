@@ -30,14 +30,14 @@ export async function GET(request: Request) {
       }
 
       const lastServiceDate = new Date(client.lastServiceDate);
-      const frequencyMs = client.frequency * 30 * 24 * 60 * 60 * 1000;
-      const nextServiceDate = new Date(lastServiceDate.getTime() + frequencyMs);
+      const nextServiceDate = new Date(lastServiceDate);
+      nextServiceDate.setMonth(nextServiceDate.getMonth() + client.frequency);
       
       const reminderDate = new Date(nextServiceDate);
       reminderDate.setDate(reminderDate.getDate() - 7);
       reminderDate.setHours(0, 0, 0, 0);
 
-      if (today.getTime() === reminderDate.getTime()) {
+      if (today.getTime() >= reminderDate.getTime() && client.status !== 'Notified') {
         const result = await sendMaintenanceReminder(
           client.clientName,
           client.task,

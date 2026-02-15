@@ -11,12 +11,7 @@ export interface ClientRecord {
   notifiedAt?: string;
 }
 
-let cachedDoc: GoogleSpreadsheet | null = null;
-
 export async function getSpreadsheet() {
-  if (cachedDoc) {
-    return cachedDoc;
-  }
 
   const serviceAccountAuth = new JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -31,7 +26,6 @@ export async function getSpreadsheet() {
 
   await doc.loadInfo();
   
-  cachedDoc = doc;
   return doc;
 }
 
@@ -93,7 +87,7 @@ export async function getAllClients(): Promise<ClientRecord[]> {
   return rows.map(row => ({
     clientName: row.get('Client Name') || '',
     lastServiceDate: row.get('Last Service Date') || '',
-    frequency: parseInt(row.get('Frequency (months)') || '0'),
+    frequency: parseInt(row.get('Frequency (months)') || '0', 10),
     task: row.get('Task') || '',
     phone: row.get('Phone') || '',
     status: row.get('Status') || 'Pending',
