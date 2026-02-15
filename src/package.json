@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "google-auth-library": "^10.5.0",
@@ -18,6 +18,7 @@
     "telegraf": "^4.16.3"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.3",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.19.11",
     "@types/nodemailer": "^6.4.16",
