@@ -41,7 +41,7 @@ export default function HomePage() {
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to register client' });
       }
-    } catch (error) {
+    } catch {
       setMessage({ type: 'error', text: 'An error occurred. Please try again.' });
     } finally {
       setLoading(false);
@@ -149,11 +149,10 @@ export default function HomePage() {
 
             {message.text && (
               <div
-                className={`p-4 rounded-lg ${
-                  message.type === 'success'
+                className={`p-4 rounded-lg ${message.type === 'success'
                     ? 'bg-green-50 text-green-800 border border-green-200'
                     : 'bg-red-50 text-red-800 border border-red-200'
-                }`}
+                  }`}
               >
                 {message.text}
               </div>
