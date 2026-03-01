@@ -1,9 +1,17 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+});
+
 export const metadata: Metadata = {
-  title: "Client Reminder - Maintenance Tracker",
-  description: "Automated maintenance tracking system with client notifications",
+  title: "Client Reminder — Maintenance Tracker",
+  description:
+    "Automated zero-cost maintenance tracking system with scheduled client notifications via Telegram and Email.",
+  keywords: ["maintenance", "client reminder", "tracking", "notifications", "CRM"],
 };
 
 export default function RootLayout({
@@ -12,8 +20,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="antialiased">
+    <html lang="en" className="dark">
+      <body className={`${inter.variable} font-sans antialiased`}>
         {children}
       </body>
     </html>
