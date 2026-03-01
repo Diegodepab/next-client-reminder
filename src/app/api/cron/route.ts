@@ -20,9 +20,7 @@ export async function GET(request: Request) {
     const clients = await getAllClients();
     const notifications = [];
 
-    for (let i = 0; i < clients.length; i++) {
-      const client = clients[i];
-
+    for (const client of clients) {
       if (client.status === 'Notified') {
         continue;
       }
@@ -30,7 +28,12 @@ export async function GET(request: Request) {
       const nextServiceDate = calculateNextServiceDate(client.lastServiceDate, client.frequency);
       const reminderDate = calculateReminderDate(nextServiceDate);
 
-      if (shouldNotify(reminderDate) && client.status !== 'Notified') {
+      // If frequency was zero or empty, we have no date to check against. Skip this client.
+      if (!nextServiceDate || !reminderDate) {
+        continue;
+      }
+
+      if (shouldNotify(reminderDate)) {
         const result = await sendMaintenanceReminder(
           client.clientName,
           client.task,
@@ -39,7 +42,11 @@ export async function GET(request: Request) {
         );
 
         if (result.telegramSent || result.emailSent) {
-          await updateClientStatus(i, 'Notified');
+          // rowIndex comes from the Apps Script doGet and maps to the
+          // actual row number in the Google Sheet (1-indexed, row 1 = header).
+          if (client.rowIndex) {
+            await updateClientStatus(client.rowIndex, 'Notified');
+          }
           notifications.push({
             client: client.clientName,
             sent: true,
