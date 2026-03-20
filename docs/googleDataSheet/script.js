@@ -1,7 +1,7 @@
 /**
- * Google Apps Script — Puente entre Next.js y Google Sheets.
+ * Google Apps Script - Bridge between Next.js and Google Sheets.
  *
- * Columnas esperadas (Fila 1 = cabecera):
+ * Expected columns (Row 1 = header):
  *   A: Timestamp
  *   B: Client Name
  *   C: Last Service Date
@@ -13,126 +13,180 @@
  *   I: Notified At
  */
 
-// ─────────────────────────────────────────────
-//  GET  →  Devuelve todos los clientes en JSON
-// ─────────────────────────────────────────────
 function doGet() {
-    var hoja = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    var datos = hoja.getDataRange().getValues(); // todas las filas, incluida la cabecera
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var values = sheet.getDataRange().getValues();
 
-    if (datos.length <= 1) {
-        // Solo hay cabecera (o está vacía)
-        return ContentService
-            .createTextOutput(JSON.stringify({ estado: 'success', clientes: [] }))
-            .setMimeType(ContentService.MimeType.JSON);
-    }
+  if (values.length <= 1) {
+    return _jsonResponse({ estado: 'success', clientes: [] });
+  }
 
-    var clientes = [];
+  var clientes = [];
 
-    for (var i = 1; i < datos.length; i++) {
-        var fila = datos[i];
-        clientes.push({
-            rowIndex: i,                    // Índice real en la hoja (útil para updates)
-            timestamp: fila[0] || '',
-            clientName: fila[1] || '',
-            lastServiceDate: fila[2] || '',
-            frequency: fila[3] || '',
-            taskDescription: fila[4] || '',
-            phoneNumber: fila[5] || '',
-            nextDate: fila[6] || '',
-            status: fila[7] || 'Pending',
-            notifiedAt: fila[8] || ''
-        });
-    }
+  // values[0] is the header row. values[1] corresponds to sheet row 2.
+  for (var i = 1; i < values.length; i++) {
+    var row = values[i];
+    var sheetRowIndex = i + 1;
 
-    return ContentService
-        .createTextOutput(JSON.stringify({ estado: 'success', clientes: clientes }))
-        .setMimeType(ContentService.MimeType.JSON);
+    clientes.push({
+      rowIndex: sheetRowIndex,
+      timestamp: row[0] || '',
+      clientName: row[1] || '',
+      lastServiceDate: row[2] || '',
+      frequency: row[3] || '',
+      taskDescription: row[4] || '',
+      phoneNumber: row[5] || '',
+      nextDate: row[6] || '',
+      status: row[7] || 'Pending',
+      notifiedAt: row[8] || '',
+    });
+  }
+
+  return _jsonResponse({ estado: 'success', clientes: clientes });
 }
 
-// ─────────────────────────────────────────────
-//  POST  →  Escribe una fila nueva o actualiza
-// ─────────────────────────────────────────────
 function doPost(e) {
-    var hoja = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
 
-    // 1. Parsear el body
-    try {
-        var datos = JSON.parse(e.postData.contents);
-    } catch (error) {
-        return _jsonResponse({ estado: 'error', mensaje: 'JSON no válido.' });
-    }
+  var data;
+  try {
+    data = JSON.parse(e.postData.contents);
+  } catch (error) {
+    return _jsonResponse({ estado: 'error', mensaje: 'JSON no valido.' });
+  }
 
-    // 2. Router: ¿es una actualización de estado o un alta nueva?
-    var action = datos._action || 'addClient';
+  var action = data._action || 'addClient';
 
-    if (action === 'updateStatus') {
-        return _handleUpdateStatus(hoja, datos);
-    }
+  if (action === 'updateStatus') {
+    return _handleUpdateStatus(sheet, data);
+  }
 
-    // ── Acción por defecto: añadir cliente ──
-    return _handleAddClient(hoja, datos);
+  if (action === 'deleteClient') {
+    return _handleDeleteClient(sheet, data);
+  }
+
+  if (action === 'updateClient') {
+    return _handleUpdateClient(sheet, data);
+  }
+
+  return _handleAddClient(sheet, data);
 }
 
-// ─────────────────────────────────────────────
-//  Handlers internos
-// ─────────────────────────────────────────────
+function _handleAddClient(sheet, data) {
+  var row = [
+    new Date(),
+    data.clientName || '',
+    data.lastServiceDate || '',
+    data.frequency || '',
+    data.taskDescription || '',
+    data.phoneNumber || '',
+    data.nextDate || '',
+    'Pending',
+    '',
+  ];
+
+  sheet.appendRow(row);
+
+  return _jsonResponse({
+    estado: 'success',
+    mensaje: 'Cliente registrado en la fila ' + sheet.getLastRow(),
+  });
+}
 
 /**
- * Añade una fila nueva con los datos del cliente.
+ * Expected: { _action: 'updateStatus', rowIndex: <int>, status: <string>, notifiedAt: <string> }
  */
-function _handleAddClient(hoja, datos) {
-    var fila = [
-        new Date(),                       // A: Timestamp
-        datos.clientName || '',      // B: Client Name
-        datos.lastServiceDate || '',      // C: Last Service Date
-        datos.frequency || '',      // D: Frequency (in months)
-        datos.taskDescription || '',      // E: Task description
-        datos.phoneNumber || '',      // F: Phone number
-        datos.nextDate || '',      // G: Next Date
-        'Pending',                        // H: Status
-        ''                                // I: Notified At
-    ];
+function _handleUpdateStatus(sheet, data) {
+  var rowIndex = parseInt(data.rowIndex, 10);
 
-    hoja.appendRow(fila);
+  if (!rowIndex || rowIndex < 2) {
+    return _jsonResponse({ estado: 'error', mensaje: 'rowIndex invalido.' });
+  }
 
-    return _jsonResponse({
-        estado: 'success',
-        mensaje: 'Cliente registrado en la fila ' + hoja.getLastRow()
-    });
+  var lastRow = sheet.getLastRow();
+  if (rowIndex > lastRow) {
+    return _jsonResponse({ estado: 'error', mensaje: 'La fila ' + rowIndex + ' no existe.' });
+  }
+
+  // Column H = 8, Column I = 9
+  sheet.getRange(rowIndex, 8).setValue(data.status || 'Notified');
+  sheet.getRange(rowIndex, 9).setValue(data.notifiedAt || new Date().toISOString());
+
+  return _jsonResponse({
+    estado: 'success',
+    mensaje: 'Fila ' + rowIndex + ' actualizada a "' + (data.status || 'Notified') + '".',
+  });
 }
 
 /**
- * Actualiza las columnas Status (H) y Notified At (I) de una fila existente.
- * Espera: { _action: 'updateStatus', rowIndex: <int>, status: <string>, notifiedAt: <string> }
+ * Expected: { _action: 'deleteClient', rowIndex: <int> }
  */
-function _handleUpdateStatus(hoja, datos) {
-    var rowIndex = parseInt(datos.rowIndex, 10);
+function _handleDeleteClient(sheet, data) {
+  var rowIndex = parseInt(data.rowIndex, 10);
 
-    if (!rowIndex || rowIndex < 2) {
-        return _jsonResponse({ estado: 'error', mensaje: 'rowIndex inválido.' });
-    }
+  if (!rowIndex || rowIndex < 2) {
+    return _jsonResponse({ estado: 'error', mensaje: 'rowIndex invalido.' });
+  }
 
-    var ultimaFila = hoja.getLastRow();
-    if (rowIndex > ultimaFila) {
-        return _jsonResponse({ estado: 'error', mensaje: 'La fila ' + rowIndex + ' no existe.' });
-    }
+  var lastRow = sheet.getLastRow();
+  if (rowIndex > lastRow) {
+    return _jsonResponse({ estado: 'error', mensaje: 'La fila ' + rowIndex + ' no existe.' });
+  }
 
-    // Columna H = 8, Columna I = 9
-    hoja.getRange(rowIndex, 8).setValue(datos.status || 'Notified');
-    hoja.getRange(rowIndex, 9).setValue(datos.notifiedAt || new Date().toISOString());
+  sheet.deleteRow(rowIndex);
 
-    return _jsonResponse({
-        estado: 'success',
-        mensaje: 'Fila ' + rowIndex + ' actualizada a "' + (datos.status || 'Notified') + '".'
-    });
+  return _jsonResponse({
+    estado: 'success',
+    mensaje: 'Fila ' + rowIndex + ' eliminada correctamente.',
+  });
 }
 
-// ─────────────────────────────────────────────
-//  Utilidades
-// ─────────────────────────────────────────────
+/**
+ * Expected:
+ *   {
+ *     _action: 'updateClient',
+ *     rowIndex: <int>,
+ *     clientName: <string>,
+ *     lastServiceDate: <string>,
+ *     frequency: <string|number>,
+ *     taskDescription: <string>,
+ *     phoneNumber: <string>,
+ *     nextDate: <string>
+ *   }
+ */
+function _handleUpdateClient(sheet, data) {
+  var rowIndex = parseInt(data.rowIndex, 10);
+
+  if (!rowIndex || rowIndex < 2) {
+    return _jsonResponse({ estado: 'error', mensaje: 'rowIndex invalido.' });
+  }
+
+  var lastRow = sheet.getLastRow();
+  if (rowIndex > lastRow) {
+    return _jsonResponse({ estado: 'error', mensaje: 'La fila ' + rowIndex + ' no existe.' });
+  }
+
+  var range = sheet.getRange(rowIndex, 1, 1, 9);
+  var current = range.getValues()[0];
+
+  // Keep Timestamp (A), Status (H) and Notified At (I)
+  current[1] = (typeof data.clientName === 'undefined') ? current[1] : (data.clientName || '');
+  current[2] = (typeof data.lastServiceDate === 'undefined') ? current[2] : (data.lastServiceDate || '');
+  current[3] = (typeof data.frequency === 'undefined') ? current[3] : (data.frequency || '');
+  current[4] = (typeof data.taskDescription === 'undefined') ? current[4] : (data.taskDescription || '');
+  current[5] = (typeof data.phoneNumber === 'undefined') ? current[5] : (data.phoneNumber || '');
+  current[6] = (typeof data.nextDate === 'undefined') ? current[6] : (data.nextDate || '');
+
+  range.setValues([current]);
+
+  return _jsonResponse({
+    estado: 'success',
+    mensaje: 'Fila ' + rowIndex + ' actualizada correctamente.',
+  });
+}
+
 function _jsonResponse(obj) {
-    return ContentService
-        .createTextOutput(JSON.stringify(obj))
-        .setMimeType(ContentService.MimeType.JSON);
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
