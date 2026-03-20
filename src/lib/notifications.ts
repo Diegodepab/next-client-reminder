@@ -1,5 +1,14 @@
-import { Telegraf } from 'telegraf';
+﻿import { Telegraf } from 'telegraf';
 import nodemailer from 'nodemailer';
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
 
 export async function sendTelegramNotification(message: string) {
   try {
@@ -23,19 +32,20 @@ export async function sendTelegramNotification(message: string) {
   }
 }
 
-export async function sendEmailNotification(
+export async function sendEmailNotificationResult(
   to: string,
   subject: string,
   text: string,
   html?: string
-) {
+): Promise<{ ok: boolean; error?: string }> {
   try {
     const user = process.env.GMAIL_USER;
     const pass = process.env.GMAIL_APP_PASSWORD;
 
     if (!user || !pass) {
-      console.warn('Gmail credentials not configured');
-      return false;
+      const error = 'Gmail credentials not configured. Check GMAIL_USER and GMAIL_APP_PASSWORD.';
+      console.warn(error);
+      return { ok: false, error };
     }
 
     const transporter = nodemailer.createTransport({
@@ -54,45 +64,67 @@ export async function sendEmailNotification(
       html: html || text,
     });
 
-    return true;
+    return { ok: true };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Failed to send email notification:', error);
-    return false;
+    return { ok: false, error: message };
   }
+}
+
+export async function sendEmailNotification(
+  to: string,
+  subject: string,
+  text: string,
+  html?: string
+) {
+  const result = await sendEmailNotificationResult(to, subject, text, html);
+  return result.ok;
 }
 
 export async function sendMaintenanceReminder(
   clientName: string,
   task: string,
   nextDate: string,
-  phone?: string
+  phone?: string,
+  confirmationUrl?: string
 ) {
-  const message = `🔔 <b>Maintenance Reminder</b>\n\n` +
-    `<b>Client:</b> ${clientName}\n` +
-    `<b>Task:</b> ${task}\n` +
-    `<b>Due Date:</b> ${nextDate}\n` +
-    (phone ? `<b>Phone:</b> ${phone}\n` : '');
+  const safeClientName = escapeHtml(clientName);
+  const safeTask = escapeHtml(task);
+  const safeNextDate = escapeHtml(nextDate);
+  const safePhone = phone ? escapeHtml(phone) : '';
+  const safeConfirmationUrl = confirmationUrl ? escapeHtml(confirmationUrl) : '';
+
+  const message = `<b>Maintenance Reminder</b>\n\n` +
+    `<b>Client:</b> ${safeClientName}\n` +
+    `<b>Task:</b> ${safeTask}\n` +
+    `<b>Due Date:</b> ${safeNextDate}\n` +
+    (safePhone ? `<b>Phone:</b> ${safePhone}\n` : '') +
+    (safeConfirmationUrl ? `\n<a href="${safeConfirmationUrl}">Mark client as notified</a>` : '');
 
   const telegramSent = await sendTelegramNotification(message);
 
   let emailSent = false;
-  if (process.env.ADMIN_EMAIL) {
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (adminEmail) {
     const emailText = `Maintenance Reminder\n\n` +
       `Client: ${clientName}\n` +
       `Task: ${task}\n` +
       `Due Date: ${nextDate}\n` +
-      (phone ? `Phone: ${phone}\n` : '');
+      (phone ? `Phone: ${phone}\n` : '') +
+      (confirmationUrl ? `\nConfirm client: ${confirmationUrl}\n` : '');
 
     const emailHtml = `
-      <h2>🔔 Maintenance Reminder</h2>
-      <p><strong>Client:</strong> ${clientName}</p>
-      <p><strong>Task:</strong> ${task}</p>
-      <p><strong>Due Date:</strong> ${nextDate}</p>
-      ${phone ? `<p><strong>Phone:</strong> ${phone}</p>` : ''}
+      <h2>Maintenance Reminder</h2>
+      <p><strong>Client:</strong> ${safeClientName}</p>
+      <p><strong>Task:</strong> ${safeTask}</p>
+      <p><strong>Due Date:</strong> ${safeNextDate}</p>
+      ${safePhone ? `<p><strong>Phone:</strong> ${safePhone}</p>` : ''}
+      ${safeConfirmationUrl ? `<p><a href="${safeConfirmationUrl}">Mark client as notified</a></p>` : ''}
     `;
 
     emailSent = await sendEmailNotification(
-      process.env.ADMIN_EMAIL,
+      adminEmail,
       `Maintenance Due: ${clientName}`,
       emailText,
       emailHtml

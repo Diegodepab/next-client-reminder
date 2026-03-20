@@ -1,108 +1,247 @@
-import { GoogleSpreadsheet } from 'google-spreadsheet';
-import { JWT } from 'google-auth-library';
+﻿import { calculateNextServiceDate } from './dates';
+import { CLIENT_STATUS } from './clientStatus';
 
 export interface ClientRecord {
+  rowIndex?: number;
   clientName: string;
   lastServiceDate: string;
   frequency: number;
   task: string;
   phone: string;
+  nextDate?: string;
   status?: string;
   notifiedAt?: string;
 }
 
-export async function getSpreadsheet() {
-
-  const serviceAccountAuth = new JWT({
-    email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-
-  const doc = new GoogleSpreadsheet(
-    process.env.GOOGLE_SHEET_ID as string,
-    serviceAccountAuth
-  );
-
-  await doc.loadInfo();
-  
-  return doc;
+interface AppsScriptResponse {
+  estado: string;
+  mensaje?: string;
+  clientes?: AppsScriptClient[];
 }
 
-export async function getOrCreateSheet() {
-  const doc = await getSpreadsheet();
-  
-  let sheet = doc.sheetsByIndex[0];
-  
-  if (!sheet) {
-    sheet = await doc.addSheet({ headerValues: [
-      'Client Name',
-      'Last Service Date',
-      'Frequency (months)',
-      'Task',
-      'Phone',
-      'Status',
-      'Notified At'
-    ]});
-  } else {
-    await sheet.loadHeaderRow();
-    const headers = sheet.headerValues;
-    
-    if (!headers.includes('Client Name')) {
-      await sheet.setHeaderRow([
-        'Client Name',
-        'Last Service Date',
-        'Frequency (months)',
-        'Task',
-        'Phone',
-        'Status',
-        'Notified At'
-      ]);
-    }
+interface AppsScriptClient {
+  rowIndex: number;
+  clientName: string;
+  lastServiceDate: string;
+  frequency: string | number;
+  taskDescription: string;
+  phoneNumber: string;
+  nextDate: string;
+  status: string;
+  notifiedAt: string;
+}
+
+function getAppsScriptUrl(): string {
+  const url = process.env.GOOGLE_PRIVATE_URL;
+  if (!url) {
+    throw new Error(
+      'Google Sheets not configured. Missing GOOGLE_PRIVATE_URL in your .env file. ' +
+      'See docs/googleDataSheet/explicacion.md for setup instructions.'
+    );
   }
-  
-  return sheet;
+  return url;
 }
 
-export async function addClient(client: ClientRecord) {
-  const sheet = await getOrCreateSheet();
-  
-  const row = await sheet.addRow({
-    'Client Name': client.clientName,
-    'Last Service Date': client.lastServiceDate,
-    'Frequency (months)': client.frequency,
-    'Task': client.task,
-    'Phone': client.phone,
-    'Status': 'Pending',
-    'Notified At': ''
+async function appsScriptFetch<T>(
+  url: string,
+  options?: RequestInit
+): Promise<T> {
+  const headers = new Headers(options?.headers);
+  headers.set('Accept', 'application/json');
+
+  const response = await fetch(url, {
+    ...options,
+    redirect: 'follow',
+    headers,
   });
-  
-  return row;
+
+  if (!response.ok) {
+    throw new Error(
+      `Apps Script request failed (${response.status}): ${response.statusText}`
+    );
+  }
+
+  const text = await response.text();
+  const contentType = response.headers.get('content-type') || '';
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const trimmed = text.trim();
+    const looksLikeHtml =
+      trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html');
+    const isValidationMessage =
+      trimmed.includes('El script de validacion esta funcionando') ||
+      trimmed.includes('script de validacion esta funcionando');
+
+    if (looksLikeHtml) {
+      throw new Error(
+        'Apps Script returned HTML instead of JSON. ' +
+          'This usually means the Web App is not deployed with access set to "Anyone" (or you are hitting the wrong URL). ' +
+          `Content-Type: ${contentType || 'unknown'}. ` +
+          `Raw response: ${trimmed.slice(0, 200)}`
+      );
+    }
+
+    if (isValidationMessage) {
+      throw new Error(
+        'Apps Script returned a plain-text validation message instead of JSON. ' +
+          'Your current Web App deployment likely does not include the expected doGet() implementation. ' +
+          'Replace the Apps Script code with docs/googleDataSheet/script.js, then deploy a new Web app ' +
+          '(Execute as: Me, Who has access: Anyone) and update GOOGLE_PRIVATE_URL with the new /exec URL. ' +
+          `Raw response: ${trimmed.slice(0, 200)}`
+      );
+    }
+
+    throw new Error(
+      `Apps Script returned invalid JSON. Content-Type: ${contentType || 'unknown'}. Raw response: ${trimmed.slice(0, 200)}`
+    );
+  }
+}
+
+export async function addClient(client: ClientRecord): Promise<AppsScriptResponse> {
+  const url = getAppsScriptUrl();
+
+  const providedNextDate = (client.nextDate || '').trim();
+  const nextServiceDate = providedNextDate
+    ? null
+    : calculateNextServiceDate(client.lastServiceDate, client.frequency);
+
+  const payload = {
+    clientName: client.clientName,
+    lastServiceDate: client.lastServiceDate,
+    frequency: client.frequency,
+    taskDescription: client.task,
+    phoneNumber: client.phone,
+    nextDate: providedNextDate
+      ? providedNextDate
+      : nextServiceDate
+        ? nextServiceDate.toISOString().split('T')[0]
+        : '',
+  };
+
+  const result = await appsScriptFetch<AppsScriptResponse>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (result.estado !== 'success') {
+    throw new Error(result.mensaje || 'Apps Script returned an error on addClient');
+  }
+
+  return result;
 }
 
 export async function getAllClients(): Promise<ClientRecord[]> {
-  const sheet = await getOrCreateSheet();
-  const rows = await sheet.getRows();
-  
-  return rows.map(row => ({
-    clientName: row.get('Client Name') || '',
-    lastServiceDate: row.get('Last Service Date') || '',
-    frequency: parseInt(row.get('Frequency (months)') || '0', 10),
-    task: row.get('Task') || '',
-    phone: row.get('Phone') || '',
-    status: row.get('Status') || 'Pending',
-    notifiedAt: row.get('Notified At') || '',
+  const url = getAppsScriptUrl();
+
+  const result = await appsScriptFetch<AppsScriptResponse>(url, {
+    method: 'GET',
+  });
+
+  if (result.estado !== 'success') {
+    throw new Error(result.mensaje || 'Apps Script returned an error on getAllClients');
+  }
+
+  if (!result.clientes) {
+    return [];
+  }
+
+  return result.clientes.map((c) => ({
+    rowIndex: c.rowIndex,
+    clientName: c.clientName,
+    lastServiceDate: String(c.lastServiceDate),
+    frequency: typeof c.frequency === 'number' ? c.frequency : parseInt(String(c.frequency), 10) || 0,
+    task: c.taskDescription,
+    phone: String(c.phoneNumber ?? ''),
+    nextDate: String(c.nextDate),
+    status: c.status || CLIENT_STATUS.pending,
+    notifiedAt: c.notifiedAt || '',
   }));
 }
 
-export async function updateClientStatus(rowIndex: number, status: string) {
-  const sheet = await getOrCreateSheet();
-  const rows = await sheet.getRows();
-  
-  if (rowIndex < rows.length) {
-    const row = rows[rowIndex];
-    row.set('Status', status);
-    row.set('Notified At', new Date().toISOString());
-    await row.save();
+export async function updateClientStatus(
+  rowIndex: number,
+  status: string
+): Promise<void> {
+  const url = getAppsScriptUrl();
+
+  const payload = {
+    _action: 'updateStatus',
+    rowIndex,
+    status,
+    notifiedAt: new Date().toISOString(),
+  };
+
+  const result = await appsScriptFetch<AppsScriptResponse>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (result.estado !== 'success') {
+    throw new Error(
+      result.mensaje || `Apps Script returned an error updating row ${rowIndex}`
+    );
+  }
+}
+
+export async function updateClient(
+  client: ClientRecord & { rowIndex: number }
+): Promise<AppsScriptResponse> {
+  const url = getAppsScriptUrl();
+
+  const providedNextDate = (client.nextDate || '').trim();
+  const nextServiceDate = providedNextDate
+    ? null
+    : calculateNextServiceDate(client.lastServiceDate, client.frequency);
+
+  const payload = {
+    _action: 'updateClient',
+    rowIndex: client.rowIndex,
+    clientName: client.clientName,
+    lastServiceDate: client.lastServiceDate,
+    frequency: client.frequency,
+    taskDescription: client.task,
+    phoneNumber: client.phone,
+    nextDate: providedNextDate
+      ? providedNextDate
+      : nextServiceDate
+        ? nextServiceDate.toISOString().split('T')[0]
+        : '',
+  };
+
+  const result = await appsScriptFetch<AppsScriptResponse>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (result.estado !== 'success') {
+    throw new Error(result.mensaje || 'Apps Script returned an error on updateClient');
+  }
+
+  return result;
+}
+
+export async function deleteClient(rowIndex: number): Promise<void> {
+  const url = getAppsScriptUrl();
+
+  const payload = {
+    _action: 'deleteClient',
+    rowIndex,
+  };
+
+  const result = await appsScriptFetch<AppsScriptResponse>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (result.estado !== 'success') {
+    throw new Error(
+      result.mensaje || `Apps Script returned an error deleting row ${rowIndex}`
+    );
   }
 }

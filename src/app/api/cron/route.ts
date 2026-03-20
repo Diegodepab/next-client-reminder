@@ -1,7 +1,9 @@
-import { NextResponse } from 'next/server';
-import { getAllClients, updateClientStatus } from '@/lib/googleSheets';
+﻿import { NextResponse } from 'next/server';
+import { getAllClients } from '@/lib/googleSheets';
 import { sendMaintenanceReminder } from '@/lib/notifications';
+import { buildClientConfirmationUrl } from '@/lib/magicLinks';
 import { calculateNextServiceDate, calculateReminderDate, shouldNotify } from '@/lib/dates';
+import { isClientNotified } from '@/lib/clientStatus';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,39 +22,39 @@ export async function GET(request: Request) {
     const clients = await getAllClients();
     const notifications = [];
 
-    for (let i = 0; i < clients.length; i++) {
-      const client = clients[i];
-
-      if (client.status === 'Notified') {
+    for (const client of clients) {
+      if (isClientNotified(client.status)) {
         continue;
       }
 
       const nextServiceDate = calculateNextServiceDate(client.lastServiceDate, client.frequency);
       const reminderDate = calculateReminderDate(nextServiceDate);
 
-      if (shouldNotify(reminderDate) && client.status !== 'Notified') {
+      if (!nextServiceDate || !reminderDate) {
+        continue;
+      }
+
+      if (shouldNotify(reminderDate)) {
+        const confirmationUrl = client.rowIndex
+          ? buildClientConfirmationUrl(client.rowIndex, request)
+          : undefined;
+
         const result = await sendMaintenanceReminder(
           client.clientName,
           client.task,
           nextServiceDate.toLocaleDateString(),
-          client.phone
+          client.phone,
+          confirmationUrl
         );
 
-        if (result.telegramSent || result.emailSent) {
-          await updateClientStatus(i, 'Notified');
-          notifications.push({
-            client: client.clientName,
-            sent: true,
-            telegram: result.telegramSent,
-            email: result.emailSent,
-          });
-        } else {
-          notifications.push({
-            client: client.clientName,
-            sent: false,
-            error: 'No notification method configured',
-          });
-        }
+        notifications.push({
+          client: client.clientName,
+          sent: result.telegramSent || result.emailSent,
+          telegram: result.telegramSent,
+          email: result.emailSent,
+          confirmationUrl,
+          error: result.telegramSent || result.emailSent ? undefined : 'No notification method configured',
+        });
       }
     }
 
