@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { addClient, getAllClients } from '@/lib/googleSheets';
+import { addClient, deleteClient, getAllClients, updateClient } from '@/lib/googleSheets';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,24 +20,21 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    // Relaxed destructuring
-    const { clientName = '', lastServiceDate = '', frequency = '', task = '', phone = '' } = body;
+    const { clientName = '', lastServiceDate = '', frequency = '', task = '', phone = '', nextDate = '' } = body;
 
-    // Only basic logic required: we need SOME starting point or it's totally blank, but we don't block.
-    // If the user submits completely empty, that's their choice.
+    const safePhone = String(phone || '').trim().match(/^[=+\-@]/)
+      ? `'${String(phone || '').trim()}`
+      : String(phone || '').trim();
 
-    // Fix Google Sheets formula error by forcing the phone number as text 
-    // when it starts with +, =, -, etc.
-    const safePhone = phone.trim().match(/^[=+\-@]/) ? `'${phone.trim()}` : phone.trim();
-
-    const frequencyNumber = frequency ? parseInt(frequency, 10) : null;
+    const frequencyNumber = String(frequency || '').trim() ? parseInt(String(frequency || '').trim(), 10) : 0;
 
     const result = await addClient({
-      clientName: clientName.trim(),
-      lastServiceDate: lastServiceDate.trim(),
-      frequency: frequencyNumber !== null && !isNaN(frequencyNumber) ? frequencyNumber : 0,
-      task: task.trim(),
+      clientName: String(clientName || '').trim(),
+      lastServiceDate: String(lastServiceDate || '').trim(),
+      frequency: Number.isFinite(frequencyNumber) ? frequencyNumber : 0,
+      task: String(task || '').trim(),
       phone: safePhone,
+      nextDate: String(nextDate || '').trim(),
     });
 
     return NextResponse.json(
@@ -51,6 +48,75 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: isConfigError ? errorMessage : 'Failed to register client. Check server logs for details.' },
       { status: isConfigError ? 503 : 500 }
+    );
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    const body = await request.json();
+
+    const { rowIndex, clientName = '', lastServiceDate = '', frequency = '', task = '', phone = '', nextDate = '' } = body;
+
+    const rowIndexNumber = typeof rowIndex === 'number' ? rowIndex : parseInt(String(rowIndex || ''), 10);
+    if (!rowIndexNumber || rowIndexNumber < 2) {
+      return NextResponse.json(
+        { error: 'Invalid rowIndex parameter' },
+        { status: 400 }
+      );
+    }
+
+    const safePhone = String(phone || '').trim().match(/^[=+\-@]/)
+      ? `'${String(phone || '').trim()}`
+      : String(phone || '').trim();
+
+    const frequencyNumber = String(frequency || '').trim() ? parseInt(String(frequency || '').trim(), 10) : 0;
+
+    const result = await updateClient({
+      rowIndex: rowIndexNumber,
+      clientName: String(clientName || '').trim(),
+      lastServiceDate: String(lastServiceDate || '').trim(),
+      frequency: Number.isFinite(frequencyNumber) ? frequencyNumber : 0,
+      task: String(task || '').trim(),
+      phone: safePhone,
+      nextDate: String(nextDate || '').trim(),
+    });
+
+    return NextResponse.json(
+      { message: 'Client updated successfully', details: result },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error('Error updating client:', error);
+    return NextResponse.json(
+      { error: 'Failed to update client', details: error instanceof Error ? error.message : String(error) },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const rowIndex = parseInt(searchParams.get('rowIndex') || '', 10);
+
+    if (!rowIndex || rowIndex < 2) {
+      return NextResponse.json(
+        { error: 'Invalid rowIndex parameter' },
+        { status: 400 }
+      );
+    }
+
+    await deleteClient(rowIndex);
+    return NextResponse.json(
+      { message: 'Client deleted successfully' },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error('Error deleting client:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to delete client' },
+      { status: 500 }
     );
   }
 }

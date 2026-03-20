@@ -1,6 +1,6 @@
-import { calculateNextServiceDate } from './dates';
+﻿import { calculateNextServiceDate } from './dates';
+import { CLIENT_STATUS } from './clientStatus';
 
-// ─── Types ───────────────────────────────────────────────────
 export interface ClientRecord {
   rowIndex?: number;
   clientName: string;
@@ -31,8 +31,6 @@ interface AppsScriptClient {
   notifiedAt: string;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────
-
 function getAppsScriptUrl(): string {
   const url = process.env.GOOGLE_PRIVATE_URL;
   if (!url) {
@@ -44,20 +42,17 @@ function getAppsScriptUrl(): string {
   return url;
 }
 
-/**
- * Follows redirects manually because Google Apps Script returns a 302
- * redirect to the actual response URL, and the native `fetch` in
- * Next.js (undici) may strip the body on redirect depending on the
- * runtime. By setting `redirect: 'follow'` we let the runtime handle
- * it transparently in most cases.
- */
 async function appsScriptFetch<T>(
   url: string,
   options?: RequestInit
 ): Promise<T> {
+  const headers = new Headers(options?.headers);
+  headers.set('Accept', 'application/json');
+
   const response = await fetch(url, {
     ...options,
     redirect: 'follow',
+    headers,
   });
 
   if (!response.ok) {
@@ -67,29 +62,50 @@ async function appsScriptFetch<T>(
   }
 
   const text = await response.text();
+  const contentType = response.headers.get('content-type') || '';
 
   try {
     return JSON.parse(text) as T;
   } catch {
+    const trimmed = text.trim();
+    const looksLikeHtml =
+      trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html');
+    const isValidationMessage =
+      trimmed.includes('El script de validacion esta funcionando') ||
+      trimmed.includes('script de validacion esta funcionando');
+
+    if (looksLikeHtml) {
+      throw new Error(
+        'Apps Script returned HTML instead of JSON. ' +
+          'This usually means the Web App is not deployed with access set to "Anyone" (or you are hitting the wrong URL). ' +
+          `Content-Type: ${contentType || 'unknown'}. ` +
+          `Raw response: ${trimmed.slice(0, 200)}`
+      );
+    }
+
+    if (isValidationMessage) {
+      throw new Error(
+        'Apps Script returned a plain-text validation message instead of JSON. ' +
+          'Your current Web App deployment likely does not include the expected doGet() implementation. ' +
+          'Replace the Apps Script code with docs/googleDataSheet/script.js, then deploy a new Web app ' +
+          '(Execute as: Me, Who has access: Anyone) and update GOOGLE_PRIVATE_URL with the new /exec URL. ' +
+          `Raw response: ${trimmed.slice(0, 200)}`
+      );
+    }
+
     throw new Error(
-      `Apps Script returned invalid JSON. Raw response: ${text.slice(0, 200)}`
+      `Apps Script returned invalid JSON. Content-Type: ${contentType || 'unknown'}. Raw response: ${trimmed.slice(0, 200)}`
     );
   }
 }
 
-// ─── Public API ──────────────────────────────────────────────
-
-/**
- * Registers a new client by sending data to the Google Apps Script.
- * Automatically calculates `nextDate` from `lastServiceDate` + `frequency`.
- */
 export async function addClient(client: ClientRecord): Promise<AppsScriptResponse> {
   const url = getAppsScriptUrl();
 
-  const nextServiceDate = calculateNextServiceDate(
-    client.lastServiceDate,
-    client.frequency
-  );
+  const providedNextDate = (client.nextDate || '').trim();
+  const nextServiceDate = providedNextDate
+    ? null
+    : calculateNextServiceDate(client.lastServiceDate, client.frequency);
 
   const payload = {
     clientName: client.clientName,
@@ -97,7 +113,11 @@ export async function addClient(client: ClientRecord): Promise<AppsScriptRespons
     frequency: client.frequency,
     taskDescription: client.task,
     phoneNumber: client.phone,
-    nextDate: nextServiceDate ? nextServiceDate.toISOString().split('T')[0] : '', // Allow empty
+    nextDate: providedNextDate
+      ? providedNextDate
+      : nextServiceDate
+        ? nextServiceDate.toISOString().split('T')[0]
+        : '',
   };
 
   const result = await appsScriptFetch<AppsScriptResponse>(url, {
@@ -113,10 +133,6 @@ export async function addClient(client: ClientRecord): Promise<AppsScriptRespons
   return result;
 }
 
-/**
- * Retrieves every client row from the Google Sheet via the Apps
- * Script `doGet` handler.
- */
 export async function getAllClients(): Promise<ClientRecord[]> {
   const url = getAppsScriptUrl();
 
@@ -138,17 +154,13 @@ export async function getAllClients(): Promise<ClientRecord[]> {
     lastServiceDate: String(c.lastServiceDate),
     frequency: typeof c.frequency === 'number' ? c.frequency : parseInt(String(c.frequency), 10) || 0,
     task: c.taskDescription,
-    phone: c.phoneNumber,
+    phone: String(c.phoneNumber ?? ''),
     nextDate: String(c.nextDate),
-    status: c.status || 'Pending',
+    status: c.status || CLIENT_STATUS.pending,
     notifiedAt: c.notifiedAt || '',
   }));
 }
 
-/**
- * Updates the Status and Notified At columns of an existing row
- * via the Apps Script `doPost` handler with `_action: 'updateStatus'`.
- */
 export async function updateClientStatus(
   rowIndex: number,
   status: string
@@ -171,6 +183,65 @@ export async function updateClientStatus(
   if (result.estado !== 'success') {
     throw new Error(
       result.mensaje || `Apps Script returned an error updating row ${rowIndex}`
+    );
+  }
+}
+
+export async function updateClient(
+  client: ClientRecord & { rowIndex: number }
+): Promise<AppsScriptResponse> {
+  const url = getAppsScriptUrl();
+
+  const providedNextDate = (client.nextDate || '').trim();
+  const nextServiceDate = providedNextDate
+    ? null
+    : calculateNextServiceDate(client.lastServiceDate, client.frequency);
+
+  const payload = {
+    _action: 'updateClient',
+    rowIndex: client.rowIndex,
+    clientName: client.clientName,
+    lastServiceDate: client.lastServiceDate,
+    frequency: client.frequency,
+    taskDescription: client.task,
+    phoneNumber: client.phone,
+    nextDate: providedNextDate
+      ? providedNextDate
+      : nextServiceDate
+        ? nextServiceDate.toISOString().split('T')[0]
+        : '',
+  };
+
+  const result = await appsScriptFetch<AppsScriptResponse>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (result.estado !== 'success') {
+    throw new Error(result.mensaje || 'Apps Script returned an error on updateClient');
+  }
+
+  return result;
+}
+
+export async function deleteClient(rowIndex: number): Promise<void> {
+  const url = getAppsScriptUrl();
+
+  const payload = {
+    _action: 'deleteClient',
+    rowIndex,
+  };
+
+  const result = await appsScriptFetch<AppsScriptResponse>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (result.estado !== 'success') {
+    throw new Error(
+      result.mensaje || `Apps Script returned an error deleting row ${rowIndex}`
     );
   }
 }
