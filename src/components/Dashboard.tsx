@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ClientForm } from '@/components/ClientForm';
 import { ClientList } from '@/components/ClientList';
 import { CalendarView } from '@/components/CalendarView';
+import { NotificationSettingsModal } from '@/components/NotificationSettingsModal';
 import { logout } from '@/app/actions/auth';
 import { useI18n } from '@/lib/i18n/I18nProvider';
 import { useTheme } from '@/lib/theme/ThemeProvider';
@@ -14,8 +15,10 @@ export function Dashboard() {
   const [activeTab, setActiveTab] = useState<'register' | 'view' | 'calendar'>('register');
   const [sendingTelegramSummary, setSendingTelegramSummary] = useState(false);
   const [sendingGmailSummary, setSendingGmailSummary] = useState(false);
+  const [sendingWhatsAppSummary, setSendingWhatsAppSummary] = useState(false);
   const [summaryMessage, setSummaryMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -84,6 +87,35 @@ export function Dashboard() {
       });
     } finally {
       setSendingGmailSummary(false);
+    }
+  }
+
+  async function sendWhatsAppSummary() {
+    setSendingWhatsAppSummary(true);
+    setSummaryMessage(null);
+    setMenuOpen(false);
+
+    try {
+      const response = await fetch('/api/whatsapp/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locale }),
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        const details = data && typeof data === 'object' ? (data.details || data.error) : null;
+        throw new Error(typeof details === 'string' && details.trim() ? details : t('whatsappSummaryFailed'));
+      }
+
+      setSummaryMessage({ type: 'success', text: t('whatsappSummarySent') });
+    } catch (error) {
+      setSummaryMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : t('whatsappSummaryFailed'),
+      });
+    } finally {
+      setSendingWhatsAppSummary(false);
     }
   }
 
@@ -190,7 +222,7 @@ export function Dashboard() {
                 <button
                   type="button"
                   onClick={sendTelegramSummary}
-                  disabled={sendingTelegramSummary || sendingGmailSummary}
+                  disabled={sendingTelegramSummary || sendingGmailSummary || sendingWhatsAppSummary}
                   className="w-full text-left px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white/10 disabled:opacity-60"
                   style={{ color: 'var(--text-primary)' }}
                 >
@@ -199,11 +231,31 @@ export function Dashboard() {
                 <button
                   type="button"
                   onClick={sendGmailSummary}
-                  disabled={sendingTelegramSummary || sendingGmailSummary}
+                  disabled={sendingTelegramSummary || sendingGmailSummary || sendingWhatsAppSummary}
                   className="w-full text-left px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white/10 disabled:opacity-60"
                   style={{ color: 'var(--text-primary)' }}
                 >
                   {sendingGmailSummary ? t('sendingGmailSummary') : t('sendGmailSummary')}
+                </button>
+                <button
+                  type="button"
+                  onClick={sendWhatsAppSummary}
+                  disabled={sendingTelegramSummary || sendingGmailSummary || sendingWhatsAppSummary}
+                  className="w-full text-left px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white/10 disabled:opacity-60"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  {sendingWhatsAppSummary ? t('sendingWhatsAppSummary') : t('sendWhatsAppSummary')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettingsOpen(true);
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl text-sm transition-colors hover:bg-white/10"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  {t('reminderSettings')}
                 </button>
                 <button
                   type="button"
@@ -267,6 +319,11 @@ export function Dashboard() {
           )}
         </div>
       </div>
+
+      <NotificationSettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }

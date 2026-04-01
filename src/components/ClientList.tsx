@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/lib/i18n/I18nProvider';
 import { isClientNotified } from '@/lib/clientStatus';
+import { formatDisplayDate } from '@/lib/dates';
 
 interface ClientRecord {
   rowIndex: number;
@@ -264,7 +265,7 @@ export function ClientList() {
               <div className="space-y-2 text-sm text-gray-300">
                 <div className="inline-flex items-center gap-2 rounded-full bg-indigo-500/15 px-3 py-1 text-xs font-medium text-indigo-200 border border-indigo-400/20">
                   <span className="text-indigo-300">{t('nextService')}:</span>
-                  <span>{client.nextDate ? new Date(client.nextDate).toLocaleDateString(locale) : t('unscheduled')}</span>
+                  <span>{client.nextDate ? formatDisplayDate(client.nextDate, locale) : t('unscheduled')}</span>
                 </div>
 
                 {client.phone && (
@@ -283,13 +284,13 @@ export function ClientList() {
                   <div>
                     <p className="text-gray-500 mb-1">{t('lastService')}</p>
                     <p className="font-medium text-gray-200">
-                      {client.lastServiceDate ? new Date(client.lastServiceDate).toLocaleDateString(locale) : '-'}
+                      {client.lastServiceDate ? formatDisplayDate(client.lastServiceDate, locale) : '-'}
                     </p>
                   </div>
                   <div>
                     <p className="text-gray-500 mb-1">{t('nextService')}</p>
                     <p className="font-medium text-indigo-300">
-                      {client.nextDate ? new Date(client.nextDate).toLocaleDateString(locale) : t('unscheduled')}
+                      {client.nextDate ? formatDisplayDate(client.nextDate, locale) : t('unscheduled')}
                     </p>
                   </div>
                 </div>
@@ -335,7 +336,7 @@ export function ClientList() {
                 <div className="rounded-lg border border-indigo-400/20 bg-indigo-500/10 p-3">
                   <p className="text-xs text-indigo-200">{t('nextService')}</p>
                   <p className="mt-1 text-sm font-medium text-white">
-                    {formNextDate ? new Date(formNextDate).toLocaleDateString(locale) : t('unscheduled')}
+                    {formNextDate ? formatDisplayDate(formNextDate, locale) : t('unscheduled')}
                   </p>
                 </div>
               </div>

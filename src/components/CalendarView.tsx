@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/lib/i18n/I18nProvider';
+import { formatDisplayDate } from '@/lib/dates';
 
 interface ClientRecord {
   rowIndex: number;
@@ -321,7 +322,7 @@ export function CalendarView() {
           <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-slate-950/90 backdrop-blur p-5" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h3 className="text-lg font-bold text-white">{selectedDateYmd}</h3>
+                <h3 className="text-lg font-bold text-white">{formatDisplayDate(selectedDateYmd, locale)}</h3>
                 <p className="text-xs text-gray-400 mt-1">
                   {mode === 'create'
                     ? t('newAppointment')
