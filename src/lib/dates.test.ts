@@ -1,4 +1,10 @@
-import { calculateNextServiceDate, calculateReminderDate, shouldNotify } from './dates';
+import {
+  calculateNextServiceDate,
+  calculateReminderDate,
+  getDaysUntilDate,
+  shouldNotify,
+  shouldRunNotificationWindow,
+} from './dates';
 
 describe('calculateNextServiceDate', () => {
   it('adds 6 months correctly', () => {
@@ -53,5 +59,50 @@ describe('shouldNotify', () => {
     const reminder = new Date(Date.UTC(2024, 4, 10));
     const today = new Date(Date.UTC(2024, 4, 9));
     expect(shouldNotify(reminder, today)).toBe(false);
+  });
+});
+
+describe('getDaysUntilDate', () => {
+  it('returns the number of full calendar days in the configured timezone', () => {
+    const now = new Date('2026-03-31T20:15:00.000Z');
+    expect(getDaysUntilDate('2026-04-05', now, 'Europe/Madrid')).toBe(5);
+  });
+});
+
+describe('shouldRunNotificationWindow', () => {
+  it('returns true when the configured hour matches and the slot was not processed yet', () => {
+    const now = new Date('2026-03-31T07:00:00.000Z');
+    expect(shouldRunNotificationWindow({
+      frequency: 'daily',
+      weeklyDay: 2,
+      notifyHour: 9,
+      daysAhead: 7,
+      timeZone: 'Europe/Madrid',
+      lastTriggeredAt: '',
+    }, now)).toBe(true);
+  });
+
+  it('returns false when the configured day does not match for weekly notifications', () => {
+    const now = new Date('2026-03-31T07:00:00.000Z');
+    expect(shouldRunNotificationWindow({
+      frequency: 'weekly',
+      weeklyDay: 3,
+      notifyHour: 9,
+      daysAhead: 7,
+      timeZone: 'Europe/Madrid',
+      lastTriggeredAt: '',
+    }, now)).toBe(false);
+  });
+
+  it('returns false when the slot already ran on the same local day', () => {
+    const now = new Date('2026-03-31T07:00:00.000Z');
+    expect(shouldRunNotificationWindow({
+      frequency: 'daily',
+      weeklyDay: 2,
+      notifyHour: 9,
+      daysAhead: 7,
+      timeZone: 'Europe/Madrid',
+      lastTriggeredAt: '2026-03-31T06:05:00.000Z',
+    }, now)).toBe(false);
   });
 });

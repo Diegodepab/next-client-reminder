@@ -1,5 +1,8 @@
-﻿import { Telegraf } from 'telegraf';
+import { Telegraf } from 'telegraf';
 import nodemailer from 'nodemailer';
+import type { ClientRecord, NotificationSettings } from './googleSheets';
+import { formatDisplayDate, getDaysUntilDate, type SupportedLocale } from './dates';
+import { sendWhatsAppClientReminderTemplate, WhatsAppSendError } from './whatsapp';
 
 function escapeHtml(value: string): string {
   return value
@@ -8,6 +11,10 @@ function escapeHtml(value: string): string {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function getAdminEmail(): string {
+  return process.env.ADMIN_EMAIL || process.env.notification_EMAIL || '';
 }
 
 export async function sendTelegramNotification(message: string) {
@@ -105,7 +112,7 @@ export async function sendMaintenanceReminder(
   const telegramSent = await sendTelegramNotification(message);
 
   let emailSent = false;
-  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminEmail = getAdminEmail();
   if (adminEmail) {
     const emailText = `Maintenance Reminder\n\n` +
       `Client: ${clientName}\n` +
@@ -132,4 +139,113 @@ export async function sendMaintenanceReminder(
   }
 
   return { telegramSent, emailSent };
+}
+
+function buildUpcomingClientsText(
+  clients: Array<ClientRecord & { daysUntil: number }>,
+  locale: SupportedLocale
+) {
+  return clients.map((client, index) => {
+    const dateLabel = formatDisplayDate(client.nextDate, locale);
+    const dayLabel = locale === 'en'
+      ? `${client.daysUntil} day(s)`
+      : `${client.daysUntil} dia(s)`;
+    const task = client.task ? ` | ${client.task}` : '';
+    return `${index + 1}. ${client.clientName || '-'} - ${dateLabel} (${dayLabel})${task}`;
+  });
+}
+
+function buildUpcomingClientsHtml(
+  clients: Array<ClientRecord & { daysUntil: number }>,
+  locale: SupportedLocale
+) {
+  return clients.map((client) => {
+    const dateLabel = escapeHtml(formatDisplayDate(client.nextDate, locale));
+    const dayLabel = locale === 'en'
+      ? `${client.daysUntil} day(s)`
+      : `${client.daysUntil} dia(s)`;
+    const task = client.task ? ` | ${escapeHtml(client.task)}` : '';
+    return `<li><strong>${escapeHtml(client.clientName || '-')}</strong> - ${dateLabel} (${escapeHtml(dayLabel)})${task}</li>`;
+  });
+}
+
+export function getUpcomingClients(
+  clients: ClientRecord[],
+  daysAhead: number,
+  now: Date,
+  timeZone: string
+) {
+  return clients
+    .map((client) => {
+      const daysUntil = getDaysUntilDate(client.nextDate || '', now, timeZone);
+      return { client, daysUntil };
+    })
+    .filter((entry): entry is { client: ClientRecord; daysUntil: number } => (
+      entry.daysUntil !== null && entry.daysUntil >= 0 && entry.daysUntil <= daysAhead
+    ))
+    .sort((a, b) => a.daysUntil - b.daysUntil || a.client.clientName.localeCompare(b.client.clientName))
+    .map(({ client, daysUntil }) => ({ ...client, daysUntil }));
+}
+
+export async function sendUpcomingClientsDigest(
+  clients: Array<ClientRecord & { daysUntil: number }>,
+  settings: NotificationSettings,
+  locale: SupportedLocale = 'es'
+) {
+  const title = locale === 'en'
+    ? `Upcoming reviews in the next ${settings.daysAhead} day(s)`
+    : `Revisiones en los proximos ${settings.daysAhead} dia(s)`;
+  const emptyMessage = locale === 'en'
+    ? 'No clients are due in the configured time window.'
+    : 'No hay clientes con revision en el rango configurado.';
+
+  const telegramMessage = clients.length > 0
+    ? `<b>${escapeHtml(title)}</b>\n\n${buildUpcomingClientsText(clients, locale)
+        .map((line) => escapeHtml(line))
+        .join('\n')}`
+    : `<b>${escapeHtml(title)}</b>\n\n${escapeHtml(emptyMessage)}`;
+
+  const textBody = clients.length > 0
+    ? `${title}\n\n${buildUpcomingClientsText(clients, locale).join('\n')}`
+    : `${title}\n\n${emptyMessage}`;
+
+  const htmlBody = clients.length > 0
+    ? `<h2>${escapeHtml(title)}</h2><ol>${buildUpcomingClientsHtml(clients, locale).join('')}</ol>`
+    : `<h2>${escapeHtml(title)}</h2><p>${escapeHtml(emptyMessage)}</p>`;
+  let telegramSent = false;
+  let emailSent = false;
+  let whatsappSent = false;
+
+  if (settings.sendTelegram) {
+    telegramSent = await sendTelegramNotification(telegramMessage);
+  }
+
+  if (settings.sendEmail) {
+    const adminEmail = getAdminEmail();
+    if (adminEmail) {
+      emailSent = await sendEmailNotification(adminEmail, title, textBody, htmlBody);
+    }
+  }
+
+  if (settings.sendWhatsApp) {
+    try {
+      await sendWhatsAppClientReminderTemplate(clients);
+      whatsappSent = true;
+    } catch (error) {
+      if (error instanceof WhatsAppSendError) {
+        console.error('Failed to send WhatsApp digest:', error.details || error.message);
+      } else {
+        console.error('Failed to send WhatsApp digest:', error);
+      }
+    }
+  }
+
+  return {
+    telegramSent,
+    emailSent,
+    whatsappSent,
+    attemptedTelegram: settings.sendTelegram,
+    attemptedEmail: settings.sendEmail,
+    attemptedWhatsApp: settings.sendWhatsApp,
+  };
 }

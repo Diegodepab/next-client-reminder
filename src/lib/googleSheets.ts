@@ -1,4 +1,4 @@
-﻿import { calculateNextServiceDate } from './dates';
+import { calculateNextServiceDate } from './dates';
 import { CLIENT_STATUS } from './clientStatus';
 
 export interface ClientRecord {
@@ -13,10 +13,24 @@ export interface ClientRecord {
   notifiedAt?: string;
 }
 
+export interface NotificationSettings {
+  enabled: boolean;
+  sendTelegram: boolean;
+  sendEmail: boolean;
+  sendWhatsApp: boolean;
+  frequency: 'daily' | 'weekly';
+  weeklyDay: number;
+  notifyHour: number;
+  daysAhead: number;
+  timeZone: string;
+  lastTriggeredAt: string;
+}
+
 interface AppsScriptResponse {
   estado: string;
   mensaje?: string;
   clientes?: AppsScriptClient[];
+  settings?: Partial<NotificationSettings>;
 }
 
 interface AppsScriptClient {
@@ -29,6 +43,59 @@ interface AppsScriptClient {
   nextDate: string;
   status: string;
   notifiedAt: string;
+}
+
+const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  enabled: true,
+  sendTelegram: true,
+  sendEmail: false,
+  sendWhatsApp: false,
+  frequency: 'daily',
+  weeklyDay: 1,
+  notifyHour: 9,
+  daysAhead: 7,
+  timeZone: process.env.NOTIFICATION_TIME_ZONE || 'Europe/Madrid',
+  lastTriggeredAt: '',
+};
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return fallback;
+}
+
+function normalizeNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function normalizeFrequency(value: unknown): NotificationSettings['frequency'] {
+  return value === 'weekly' ? 'weekly' : 'daily';
+}
+
+export function getDefaultNotificationSettings(): NotificationSettings {
+  return { ...DEFAULT_NOTIFICATION_SETTINGS };
+}
+
+function normalizeSettings(settings?: Partial<NotificationSettings>): NotificationSettings {
+  const defaults = getDefaultNotificationSettings();
+  return {
+    enabled: normalizeBoolean(settings?.enabled, defaults.enabled),
+    sendTelegram: normalizeBoolean(settings?.sendTelegram, defaults.sendTelegram),
+    sendEmail: normalizeBoolean(settings?.sendEmail, defaults.sendEmail),
+    sendWhatsApp: normalizeBoolean(settings?.sendWhatsApp, defaults.sendWhatsApp),
+    frequency: normalizeFrequency(settings?.frequency),
+    weeklyDay: normalizeNumber(settings?.weeklyDay, defaults.weeklyDay, 0, 6),
+    notifyHour: normalizeNumber(settings?.notifyHour, defaults.notifyHour, 0, 23),
+    daysAhead: normalizeNumber(settings?.daysAhead, defaults.daysAhead, 1, 30),
+    timeZone: String(settings?.timeZone || defaults.timeZone || 'Europe/Madrid').trim() || 'Europe/Madrid',
+    lastTriggeredAt: String(settings?.lastTriggeredAt || ''),
+  };
 }
 
 function getAppsScriptUrl(): string {
@@ -244,4 +311,37 @@ export async function deleteClient(rowIndex: number): Promise<void> {
       result.mensaje || `Apps Script returned an error deleting row ${rowIndex}`
     );
   }
+}
+
+export async function getNotificationSettings(): Promise<NotificationSettings> {
+  const url = `${getAppsScriptUrl()}?settings=1`;
+  const result = await appsScriptFetch<AppsScriptResponse>(url, { method: 'GET' });
+
+  if (result.estado !== 'success') {
+    throw new Error(result.mensaje || 'Apps Script returned an error on getNotificationSettings');
+  }
+
+  return normalizeSettings(result.settings);
+}
+
+export async function updateNotificationSettings(
+  partialSettings: Partial<NotificationSettings>
+): Promise<NotificationSettings> {
+  const url = getAppsScriptUrl();
+  const payload = {
+    _action: 'updateSettings',
+    settings: normalizeSettings(partialSettings),
+  };
+
+  const result = await appsScriptFetch<AppsScriptResponse>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (result.estado !== 'success') {
+    throw new Error(result.mensaje || 'Apps Script returned an error on updateNotificationSettings');
+  }
+
+  return normalizeSettings(result.settings);
 }
