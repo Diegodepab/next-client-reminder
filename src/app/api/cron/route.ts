@@ -1,9 +1,7 @@
-﻿import { NextResponse } from 'next/server';
-import { getAllClients } from '@/lib/googleSheets';
-import { sendMaintenanceReminder } from '@/lib/notifications';
-import { buildClientConfirmationUrl } from '@/lib/magicLinks';
-import { calculateNextServiceDate, calculateReminderDate, shouldNotify } from '@/lib/dates';
-import { isClientNotified } from '@/lib/clientStatus';
+import { NextResponse } from 'next/server';
+import { getAllClients, getNotificationSettings, updateNotificationSettings } from '@/lib/googleSheets';
+import { sendUpcomingClientsDigest, getUpcomingClients } from '@/lib/notifications';
+import { shouldRunNotificationWindow } from '@/lib/dates';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,50 +17,67 @@ export async function GET(request: Request) {
       );
     }
 
-    const clients = await getAllClients();
-    const notifications = [];
+    const settings = await getNotificationSettings();
 
-    for (const client of clients) {
-      if (isClientNotified(client.status)) {
-        continue;
-      }
-
-      const nextServiceDate = calculateNextServiceDate(client.lastServiceDate, client.frequency);
-      const reminderDate = calculateReminderDate(nextServiceDate);
-
-      if (!nextServiceDate || !reminderDate) {
-        continue;
-      }
-
-      if (shouldNotify(reminderDate)) {
-        const confirmationUrl = client.rowIndex
-          ? buildClientConfirmationUrl(client.rowIndex, request)
-          : undefined;
-
-        const result = await sendMaintenanceReminder(
-          client.clientName,
-          client.task,
-          nextServiceDate.toLocaleDateString(),
-          client.phone,
-          confirmationUrl
-        );
-
-        notifications.push({
-          client: client.clientName,
-          sent: result.telegramSent || result.emailSent,
-          telegram: result.telegramSent,
-          email: result.emailSent,
-          confirmationUrl,
-          error: result.telegramSent || result.emailSent ? undefined : 'No notification method configured',
-        });
-      }
+    if (!settings.enabled) {
+      return NextResponse.json({
+        success: true,
+        skipped: true,
+        reason: 'Notifications are disabled',
+      });
     }
+
+    if (!settings.sendTelegram && !settings.sendEmail && !settings.sendWhatsApp) {
+      return NextResponse.json({
+        success: true,
+        skipped: true,
+        reason: 'No notification channel enabled',
+      });
+    }
+
+    if (!shouldRunNotificationWindow(settings)) {
+      return NextResponse.json({
+        success: true,
+        skipped: true,
+        reason: 'Outside configured notification window',
+        settings,
+      });
+    }
+
+    const now = new Date();
+    const clients = await getAllClients();
+    const upcomingClients = getUpcomingClients(clients, settings.daysAhead, now, settings.timeZone);
+    const sendResult = await sendUpcomingClientsDigest(upcomingClients, settings, 'es');
+
+    if (upcomingClients.length > 0 && !sendResult.telegramSent && !sendResult.emailSent && !sendResult.whatsappSent) {
+      return NextResponse.json(
+        {
+          error: 'No reminder channel could send the digest',
+          upcoming: upcomingClients.length,
+          attemptedTelegram: sendResult.attemptedTelegram,
+          attemptedEmail: sendResult.attemptedEmail,
+          attemptedWhatsApp: sendResult.attemptedWhatsApp,
+        },
+        { status: 500 }
+      );
+    }
+
+    await updateNotificationSettings({
+      ...settings,
+      lastTriggeredAt: now.toISOString(),
+    });
 
     return NextResponse.json({
       success: true,
       checked: clients.length,
-      notifications: notifications.length,
-      details: notifications,
+      upcoming: upcomingClients.length,
+      telegramSent: sendResult.telegramSent,
+      emailSent: sendResult.emailSent,
+      whatsappSent: sendResult.whatsappSent,
+      attemptedTelegram: sendResult.attemptedTelegram,
+      attemptedEmail: sendResult.attemptedEmail,
+      attemptedWhatsApp: sendResult.attemptedWhatsApp,
+      settings,
     });
   } catch (error) {
     console.error('Cron job error:', error);

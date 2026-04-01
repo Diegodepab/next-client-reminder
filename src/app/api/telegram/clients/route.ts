@@ -1,7 +1,8 @@
-﻿import { cookies } from 'next/headers';
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { getAllClients } from '@/lib/googleSheets';
 import { sendTelegramNotification } from '@/lib/notifications';
+import { formatDisplayDate, type SupportedLocale } from '@/lib/dates';
 
 function escapeHtml(value: string): string {
   return value
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}));
-    const locale = body && typeof body.locale === 'string' ? body.locale : 'es';
+    const locale: SupportedLocale = body && body.locale === 'en' ? 'en' : 'es';
 
     const clients = await getAllClients();
     const sortedClients = [...clients].sort((a, b) => {
@@ -40,9 +41,7 @@ export async function POST(request: Request) {
 
     const lines = sortedClients.map((client, index) => {
       const nextDate = parseDate(client.nextDate);
-      const nextDateLabel = nextDate
-        ? nextDate.toLocaleDateString(locale)
-        : (locale === 'en' ? 'Unscheduled' : 'Sin fecha');
+      const nextDateLabel = nextDate ? formatDisplayDate(nextDate, locale) : (locale === 'en' ? 'Unscheduled' : 'Sin fecha');
       const phone = client.phone ? ` | Tel: ${escapeHtml(client.phone.startsWith("'") ? client.phone.slice(1) : client.phone)}` : '';
       const task = client.task ? ` | ${escapeHtml(client.task)}` : '';
       return `${index + 1}. <b>${escapeHtml(client.clientName || '-')}</b> - ${escapeHtml(nextDateLabel)}${phone}${task}`;

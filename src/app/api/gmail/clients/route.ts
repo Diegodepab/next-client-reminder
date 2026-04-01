@@ -1,7 +1,8 @@
-﻿import { cookies } from 'next/headers';
+import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { getAllClients } from '@/lib/googleSheets';
 import { sendEmailNotificationResult } from '@/lib/notifications';
+import { formatDisplayDate, type SupportedLocale } from '@/lib/dates';
 
 function escapeHtml(value: string): string {
   return value
@@ -25,13 +26,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const adminEmail = process.env.notification_EMAIL;
+    const adminEmail = process.env.notification_EMAIL || process.env.ADMIN_EMAIL;
     if (!adminEmail) {
-      return NextResponse.json({ error: 'Missing notification_EMAIL in .env' }, { status: 500 });
+      return NextResponse.json({ error: 'Missing notification_EMAIL or ADMIN_EMAIL in environment variables' }, { status: 500 });
     }
 
     const body = await request.json().catch(() => ({}));
-    const locale = body && typeof body.locale === 'string' ? body.locale : 'es';
+    const locale: SupportedLocale = body && body.locale === 'en' ? 'en' : 'es';
 
     const clients = await getAllClients();
     const sortedClients = [...clients].sort((a, b) => {
@@ -49,9 +50,7 @@ export async function POST(request: Request) {
 
     const textLines = sortedClients.map((client, index) => {
       const nextDate = parseDate(client.nextDate);
-      const nextDateLabel = nextDate
-        ? nextDate.toLocaleDateString(locale)
-        : (locale === 'en' ? 'Unscheduled' : 'Sin fecha');
+      const nextDateLabel = nextDate ? formatDisplayDate(nextDate, locale) : (locale === 'en' ? 'Unscheduled' : 'Sin fecha');
       const phone = client.phone ? ` | Tel: ${client.phone.startsWith("'") ? client.phone.slice(1) : client.phone}` : '';
       const task = client.task ? ` | ${client.task}` : '';
       return `${index + 1}. ${client.clientName || '-'} - ${nextDateLabel}${phone}${task}`;
@@ -59,9 +58,7 @@ export async function POST(request: Request) {
 
     const htmlLines = sortedClients.map((client) => {
       const nextDate = parseDate(client.nextDate);
-      const nextDateLabel = nextDate
-        ? nextDate.toLocaleDateString(locale)
-        : (locale === 'en' ? 'Unscheduled' : 'Sin fecha');
+      const nextDateLabel = nextDate ? formatDisplayDate(nextDate, locale) : (locale === 'en' ? 'Unscheduled' : 'Sin fecha');
       const phone = client.phone ? ` | Tel: ${escapeHtml(client.phone.startsWith("'") ? client.phone.slice(1) : client.phone)}` : '';
       const task = client.task ? ` | ${escapeHtml(client.task)}` : '';
       return `<li><strong>${escapeHtml(client.clientName || '-')}</strong> - ${escapeHtml(nextDateLabel)}${phone}${task}</li>`;
